@@ -57,6 +57,34 @@ class LruCacheSingleton {
     return _memoryCache.remove(key);
   }
 
+  /// How the in-memory cache has been performing so far this session.
+  ///
+  /// **Do not add the two layers together.** A lookup goes to memory first and
+  /// only falls through to disk on a miss, so one segment served from disk
+  /// counts as a memory miss *and* a storage hit. Summing them reports 50% for
+  /// a segment the cache did serve. The end-to-end hit rate is
+  ///
+  ///     (memoryStats.hits + storageStats.hits) / (memoryStats.hits + memoryStats.misses)
+  ///
+  /// — the denominator is the memory layer alone, because every lookup starts
+  /// there.
+  ///
+  /// Both counters are cumulative for the life of the process and are never
+  /// reset, so a caller sampling them repeatedly should compare against its own
+  /// previous reading rather than treat them as an interval.
+  ///
+  /// Reading this constructs the singleton if nothing has touched the cache
+  /// yet, and the singleton sizes both layers from [Config] at construction
+  /// time. Read it after `VideoProxy.init()`, or the sizes configured there
+  /// will not apply.
+  ({int hits, int misses}) get memoryStats =>
+      (hits: _memoryCache.hitCount, misses: _memoryCache.missCount);
+
+  /// Hits and misses of the disk layer, counted only for lookups that got past
+  /// memory. See [memoryStats] for why these must not be summed with it.
+  ({int hits, int misses}) get storageStats =>
+      (hits: _storageCache.hitCount, misses: _storageCache.missCount);
+
   /// Clears all entries from the in-memory cache.
   Future<void> memoryClear() {
     return _memoryCache.clear();

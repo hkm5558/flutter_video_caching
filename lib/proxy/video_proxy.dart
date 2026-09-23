@@ -35,6 +35,11 @@ class VideoProxy {
   /// HTTP client builder for creating HTTP clients.
   static late HttpClientBuilder httpClientBuilderImpl;
 
+  /// The builder [init] was given for the download pool, kept so [restart]
+  /// rebuilds the manager the same way. Null means the caller did not supply
+  /// one, and the pool keeps building its own client on `NativeAdapter`.
+  static HttpClientBuilder? _downloadHttpClientBuilder;
+
   /// Initializes the video proxy server and related components.
   ///
   /// [ip]: Optional IP address for the proxy server to bind.<br>
@@ -46,7 +51,12 @@ class VideoProxy {
   /// [segmentSize]: Size of each video segment in MB (default: 2).<br>
   /// [maxConcurrentDownloads]: Maximum number of concurrent downloads (default: 8).<br>
   /// [urlMatcher]: Optional custom URL matcher for video URL filtering.<br>
-  /// [httpClientBuilder]: Optional custom HTTP client builder for creating HTTP clients.<br>
+  /// [httpClientBuilder]: Optional custom HTTP client builder for the requests
+  /// the proxy makes while serving (playlists and ranges).<br>
+  /// [downloadHttpClientBuilder]: Optional builder for the prefetch pool.
+  /// Separate from [httpClientBuilder] on purpose — the pool runs on
+  /// `NativeAdapter`, and sharing one builder would move one path off its
+  /// stack. Omitted means the pool keeps building its own client.<br>
   static Future<void> init({
     String? ip,
     int? port,
@@ -58,6 +68,7 @@ class VideoProxy {
     int maxConcurrentDownloads = 4,
     UrlMatcher? urlMatcher,
     HttpClientBuilder? httpClientBuilder,
+    HttpClientBuilder? downloadHttpClientBuilder,
   }) async {
     // Set global configuration values for cache sizes and segment size.
     Config.memoryCacheSize = maxMemoryCacheSize * Config.mbSize;
@@ -81,8 +92,18 @@ class VideoProxy {
     httpClientBuilderImpl = httpClientBuilder ?? HttpClientDefault();
 
     // Initialize the download manager with the specified concurrency.
+    //
+    // The pool takes its own builder, not [httpClientBuilder]. The two serve
+    // different paths and want different stacks: [httpClientBuilder] backs the
+    // playlist and range requests the proxy makes while serving, which run on
+    // a plain Dio, while the pool prefetches on `NativeAdapter`. Feeding one
+    // builder to both moves one of them off its stack.
+    //
+    // Omitted means the pool keeps building its own client, exactly as before.
     _maxConcurrentDownloads = maxConcurrentDownloads;
-    downloadManager = DownloadManager(maxConcurrentDownloads);
+    _downloadHttpClientBuilder = downloadHttpClientBuilder;
+    downloadManager =
+        DownloadManager(maxConcurrentDownloads, downloadHttpClientBuilder);
 
     // Set the URL matcher implementation (custom or default).
     urlMatcherImpl = urlMatcher ?? UrlMatcherDefault();
@@ -108,7 +129,8 @@ class VideoProxy {
     // Dispose stale download state (dead TCP connections, in-flight tasks)
     // and recreate with a fresh Dio client.
     downloadManager.dispose();
-    downloadManager = DownloadManager(_maxConcurrentDownloads);
+    downloadManager =
+        DownloadManager(_maxConcurrentDownloads, _downloadHttpClientBuilder);
     await _localProxyServer.restart();
   }
 

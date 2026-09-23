@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:native_dio_adapter/native_dio_adapter.dart';
 import 'package:synchronized/synchronized.dart';
 
@@ -10,6 +10,7 @@ import '../cache/lru_cache_singleton.dart';
 import '../ext/file_ext.dart';
 import '../ext/gesture_ext.dart';
 import '../ext/log_ext.dart';
+import '../http/http_client_builder.dart';
 import 'download_status.dart';
 import 'download_task.dart';
 
@@ -42,13 +43,36 @@ class DownloadPool {
 
   /// Constructs a [DownloadPool] with the specified [poolSize].
   /// Throws an [ArgumentError] if the pool size is less than or equal to zero.
-  DownloadPool({int poolSize = MAX_POOL_SIZE}) : _poolSize = poolSize {
+  ///
+  /// [httpClientBuilder] lets the caller supply the client this pool downloads
+  /// with — to attach an interceptor, for instance. It is only used when given:
+  /// the default stays `NativeAdapter`, and swapping that for a plain [Dio]
+  /// would quietly move prefetching off the platform stack.
+  DownloadPool({
+    int poolSize = MAX_POOL_SIZE,
+    HttpClientBuilder? httpClientBuilder,
+  }) : _poolSize = poolSize {
     if (_poolSize <= 0) {
       throw ArgumentError('Pool size must be greater than 0');
     }
-    _client = Dio()..httpClientAdapter = _createHttpClientAdapter();
+    _client = httpClientBuilder?.create() ??
+        (Dio()..httpClientAdapter = _createHttpClientAdapter());
     _streamController = StreamController.broadcast();
   }
+
+  /// The client this pool downloads with.
+  @visibleForTesting
+  Dio get client => _client;
+
+  /// How many times the pool has built its own adapter.
+  ///
+  /// Under `flutter test` the native library is absent, so both paths end up
+  /// on the same fallback adapter and the client alone cannot tell them apart.
+  /// This counts the path actually taken, which is the thing worth pinning:
+  /// routing the default through a builder would move prefetching off the
+  /// platform stack.
+  @visibleForTesting
+  static int debugOwnAdapterBuilds = 0;
 
   /// Returns the stream controller for task updates.
   StreamController<DownloadTask> get streamController => _streamController;
@@ -67,6 +91,7 @@ class DownloadPool {
       .toList();
 
   HttpClientAdapter _createHttpClientAdapter() {
+    debugOwnAdapterBuilds++;
     try {
       return NativeAdapter();
     } catch (error) {

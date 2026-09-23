@@ -16,6 +16,7 @@ class FakePathProviderPlatform extends Fake
 }
 
 void main() {
+  _poolClientTests();
   TestWidgetsFlutterBinding.ensureInitialized();
   group('DownloadIsolatePool', () {
     late DownloadPool pool;
@@ -92,6 +93,48 @@ void main() {
       await Future.delayed(const Duration(milliseconds: 1000));
       pool.dispose();
       expect(pool.taskList, isEmpty);
+    });
+  });
+}
+
+/// A builder that hands out a client the caller can recognise later.
+class _MarkedClientBuilder extends HttpClientBuilder {
+  int createCalls = 0;
+
+  @override
+  Dio create() {
+    createCalls++;
+    return Dio(BaseOptions(headers: {'x-marked': 'yes'}));
+  }
+}
+
+void _poolClientTests() {
+  group('DownloadPool http client', () {
+    setUp(() => DownloadPool.debugOwnAdapterBuilds = 0);
+
+    test('builds its own adapter when no builder is given', () {
+      // Prefetching runs on NativeAdapter. Routing the default through a
+      // builder would move every prefetch off the platform stack, silently.
+      //
+      // The adapter itself is not asserted on: NativeAdapter needs a native
+      // library that is absent under `flutter test`, so both paths land on the
+      // same fallback and comparing them would say nothing. What is pinned is
+      // that the pool went down its own path at all.
+      final pool = DownloadPool(poolSize: 1);
+      addTearDown(pool.dispose);
+
+      expect(DownloadPool.debugOwnAdapterBuilds, 1);
+    });
+
+    test('uses the builder when one is given, and builds no adapter itself',
+        () {
+      final builder = _MarkedClientBuilder();
+      final pool = DownloadPool(poolSize: 1, httpClientBuilder: builder);
+      addTearDown(pool.dispose);
+
+      expect(builder.createCalls, 1);
+      expect(pool.client.options.headers['x-marked'], 'yes');
+      expect(DownloadPool.debugOwnAdapterBuilds, 0);
     });
   });
 }

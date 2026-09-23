@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../ext/string_ext.dart';
+import '../http/http_client_builder.dart';
 import 'download_pool.dart';
 import 'download_status.dart';
 import 'download_task.dart';
@@ -10,9 +11,17 @@ class DownloadManager {
   /// The pool that manages all download threads.
   late DownloadPool _downloadPool;
 
-  /// Constructs a [DownloadManager] with an optional maximum number of concurrent downloads.
-  DownloadManager([int maxConcurrentDownloads = MAX_POOL_SIZE]) {
-    _downloadPool = DownloadPool(poolSize: maxConcurrentDownloads);
+  /// Constructs a [DownloadManager] with an optional maximum number of
+  /// concurrent downloads, and an optional [httpClientBuilder] for the pool to
+  /// download with. See [DownloadPool] for what happens when it is omitted.
+  DownloadManager([
+    int maxConcurrentDownloads = MAX_POOL_SIZE,
+    HttpClientBuilder? httpClientBuilder,
+  ]) {
+    _downloadPool = DownloadPool(
+      poolSize: maxConcurrentDownloads,
+      httpClientBuilder: httpClientBuilder,
+    );
   }
 
   /// Provides a stream of [DownloadTask] updates for listeners.
