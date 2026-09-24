@@ -112,13 +112,29 @@ class DownloadPool {
   DownloadTask? findTaskByUrl(String url) =>
       _taskList.where((task) => task.url == url).firstOrNull;
 
+  /// Records that a serve loop is now waiting on [task]'s segment.
+  ///
+  /// Marks both the caller's task and the one already in the pool under the
+  /// same cache key. They are usually different objects: when a segment is
+  /// already being fetched, `executeTask` keeps the pooled task and discards
+  /// the incoming one, so marking only the caller's would mark an object that
+  /// never reaches the network. Marking only the pooled one would miss the
+  /// case where the caller's task is the one about to be added.
+  void markTaskAwaited(DownloadTask task) {
+    task.awaitedByPlayback = true;
+    _taskList
+        .where((e) => e.matchUrl == task.matchUrl)
+        .firstOrNull
+        ?.awaitedByPlayback = true;
+  }
+
   /// Adds a new [task] to the pool, creating a cache directory if needed.
   Future<DownloadTask> addTask(DownloadTask task) async {
     logV('[DownloadPool] addTask: ${task.toString()}');
     DownloadTask? existTask =
         _taskList.where((e) => e.matchUrl == task.matchUrl).firstOrNull;
     if (existTask != null) {
-      _promoteTaskPriorityIfNeeded(existTask, task);
+      _mergeIntoExistingTask(existTask, task);
       return existTask;
     }
     if (task.cacheDir.isEmpty) {
@@ -135,7 +151,7 @@ class DownloadPool {
     DownloadTask? existTask =
         _taskList.where((e) => e.matchUrl == task.matchUrl).firstOrNull;
     if (existTask != null) {
-      _promoteTaskPriorityIfNeeded(existTask, task);
+      _mergeIntoExistingTask(existTask, task);
     } else if (existTask == null) {
       await addTask(task);
     }
@@ -143,10 +159,21 @@ class DownloadPool {
     return task;
   }
 
-  void _promoteTaskPriorityIfNeeded(
+  /// Carries [incomingTask]'s playback mark and higher priority over to the
+  /// [existingTask] that keeps its place in the pool. Every other field stays
+  /// with the pooled task.
+  void _mergeIntoExistingTask(
     DownloadTask existingTask,
     DownloadTask incomingTask,
   ) {
+    // The mark is merged before the priority guard below, which returns for an
+    // incoming task that does not outrank the pooled one — a prefetch may well
+    // have been built with the higher priority of the two.
+    //
+    // Only ever set, never cleared: read-ahead tasks carry no mark, and
+    // assigning would wipe out a waiting loop's.
+    if (incomingTask.awaitedByPlayback) existingTask.awaitedByPlayback = true;
+
     if (existingTask.priority >= incomingTask.priority) return;
 
     // Keep the existing task object so listeners waiting on this cache key
@@ -259,7 +286,12 @@ class DownloadPool {
           _updateProgress(task);
         }
       },
-      options: Options(headers: headers),
+      // Rides along in `extra`, which dio keeps to itself — nothing is added
+      // to the request that goes out. See [DownloadTask.extraKey].
+      options: Options(
+        headers: headers,
+        extra: <String, Object?>{DownloadTask.extraKey: task},
+      ),
     ).then((response) async {
       await _downloadResponse(task, startTime);
     }).catchError((error) {

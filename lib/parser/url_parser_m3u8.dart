@@ -95,6 +95,7 @@ class UrlParserM3U8 implements UrlParser {
       }
       Uint8List? data = await cache(task);
       if (data == null) {
+        VideoProxy.downloadManager.markTaskAwaited(task);
         if (VideoProxy.downloadManager.isUrlDownloading(task)) {
           while (data == null) {
             await Future.delayed(const Duration(milliseconds: 100));

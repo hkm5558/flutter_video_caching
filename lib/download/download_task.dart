@@ -8,6 +8,16 @@ import 'download_status.dart';
 
 /// Represents a single download task, including its metadata, status, and progress.
 class DownloadTask {
+  /// Key under which the download pool puts the task into
+  /// `RequestOptions.extra`, for an interceptor supplied through
+  /// `HttpClientBuilder` to read.
+  ///
+  /// What is stored is the task itself, so that [awaitedByPlayback] stays
+  /// readable through the same reference while the request is in flight. Read
+  /// the fields you need at response time and keep those — holding on to the
+  /// task keeps its downloaded bytes alive with it.
+  static const String extraKey = 'flutter_video_caching.task';
+
   /// Unique ID for the task, auto-incremented.
   final String id;
 
@@ -65,6 +75,19 @@ class DownloadTask {
 
   /// The name of the file to be saved.
   String fileName;
+
+  /// Whether a serve loop has ever blocked on this segment.
+  ///
+  /// Set when the proxy looks for a segment, misses the cache and has to wait
+  /// — whether it waits on someone else's download or starts its own. Anything
+  /// else fetching this segment is working ahead for a video that may never be
+  /// played, and the two have no business sharing a latency figure.
+  ///
+  /// Never cleared. A task may be shared: the loop that started it can give up
+  /// while another goes on waiting, and a prefetch may end up serving playback.
+  /// The question this answers is "did anyone wait on this download", so once
+  /// true it stays true, and the task is dropped from the pool when it finishes.
+  bool awaitedByPlayback = false;
 
   /// Constructs a new DownloadTask with the given parameters.
   /// [uri] is required. [fileName] is optional; if not provided, uses the URI as the file name.

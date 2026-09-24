@@ -117,6 +117,14 @@ class DownloadManager {
     allTasks.clear();
   }
 
+  /// Records that a serve loop is now waiting on [task]'s segment.
+  ///
+  /// Call it the moment the cache comes up empty: from there the player is
+  /// blocked on this segment either way, whether the loop goes on to wait for
+  /// a download someone else started or starts its own.
+  void markTaskAwaited(DownloadTask task) =>
+      _downloadPool.markTaskAwaited(task);
+
   /// Checks if a task with the given URL exists.
   bool isTaskExit(DownloadTask task) {
     return allTasks.where((t) => t.matchUrl == task.matchUrl).isNotEmpty;

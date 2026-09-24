@@ -219,6 +219,7 @@ class UrlParserMp4 implements UrlParser {
       // next swipe.
       await concurrent(task, headers, contentLength);
       Uint8List? data = await cache(task);
+      if (data == null) VideoProxy.downloadManager.markTaskAwaited(task);
       // if the task has been added, wait for the download to complete
       bool exitUri = VideoProxy.downloadManager.isTaskExit(task);
       if (exitUri && data == null) {
@@ -313,6 +314,7 @@ class UrlParserMp4 implements UrlParser {
 
       await concurrent(task, headers, totalContentLength);
       Uint8List? data = await cache(task);
+      if (data == null) VideoProxy.downloadManager.markTaskAwaited(task);
       // if the task has been added, wait for the download to complete
       bool exitUri = VideoProxy.downloadManager.isTaskExit(task);
       if (exitUri && data == null) {

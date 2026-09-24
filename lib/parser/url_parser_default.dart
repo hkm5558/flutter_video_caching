@@ -180,6 +180,7 @@ class UrlParserDefault implements UrlParser {
       );
 
       Uint8List? data = await cache(task);
+      if (data == null) VideoProxy.downloadManager.markTaskAwaited(task);
       // if the task has been added, wait for the download to complete
       bool exitUri = VideoProxy.downloadManager.isTaskExit(task);
 
@@ -288,6 +289,7 @@ class UrlParserDefault implements UrlParser {
       );
 
       Uint8List? data = await cache(task);
+      if (data == null) VideoProxy.downloadManager.markTaskAwaited(task);
       // if the task has been added, wait for the download to complete
       bool exitUri = VideoProxy.downloadManager.isTaskExit(task);
       if (exitUri) {
