@@ -161,6 +161,17 @@ class DownloadTask {
   /// Returns the file path to be used for saving.
   String get savePath => "$cacheDir/$saveFileName";
 
+  /// 这个任务下完后 `.tmp` 应有的字节数，不知道时为 null。供下载池内部判断续传用。
+  ///
+  /// 分段按 Range 算；整文件要等响应告诉总长，即下载池在进度回调里记下的
+  /// [totalBytes]（本次请求起点 + 本次响应长度）。下载池拿它和 `.tmp` 的实际长度比，
+  /// 判断续传时文件是已经下满了还是写坏了。
+  int? get expectedLength {
+    final int length =
+        endRange != null ? endRange! - startRange + 1 : totalBytes;
+    return length > 0 ? length : null;
+  }
+
   /// Static auto-incremented ID for generating unique task IDs.
   static int _autoId = 1;
 

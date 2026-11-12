@@ -259,16 +259,34 @@ class DownloadPool {
 
   Future<void> _download(DownloadTask task) async {
     DateTime startTime = DateTime.now();
-    if (task.cancelToken == null) {
-      task.cancelToken = CancelToken();
-    }
-    bool append = task.cachedBytes > 0;
-    Map<String, Object> headers = _downloadHeader(task);
     // Write to a temp file and atomically rename it to the final name once the
     // download completes. An interruption (or a killed process) leaves only a
     // `.tmp` file, never a half-written segment under its final name (`.tmp` is
     // skipped during startup restore — see LruCacheSingleton._storageInit).
     final String tmpPath = '${task.savePath}.tmp';
+    // 续传起点只认磁盘上 .tmp 的实际长度：内存里的计数经过暂停、失败会和文件对不上，
+    // 对不上时 Range 要么越界拿到 416，要么从错位处接着写、分段中间缺一截。
+    final File tmpFile = File(tmpPath);
+    final bool hasTmp = tmpFile.existsSync();
+    int onDisk = hasTmp ? tmpFile.lengthSync() : 0;
+    final int? expected = task.expectedLength;
+    if (expected != null && onDisk > expected) {
+      // 比应有的还长说明写坏了，不能发布，丢掉从头下
+      tmpFile.deleteSync();
+      onDisk = 0;
+    } else if (hasTmp && expected != null && onDisk == expected) {
+      // 数据已齐只是没来得及改名（最后一块到达时恰好被暂停），再请求只会从末尾要数据
+      await _downloadResponse(task, startTime).catchError((error) {
+        _downloadError(task, error);
+      });
+      return;
+    }
+    task.cachedBytes = onDisk;
+    if (task.cancelToken == null) {
+      task.cancelToken = CancelToken();
+    }
+    bool append = task.cachedBytes > 0;
+    Map<String, Object> headers = _downloadHeader(task);
     await _client.download(
       task.url,
       tmpPath,
@@ -277,10 +295,11 @@ class DownloadPool {
       deleteOnError: false,
       onReceiveProgress: (received, total) {
         _downloadProgress(task, received, total);
-        if (task.status == DownloadStatus.PAUSED ||
-            task.status == DownloadStatus.COMPLETED) {
-          task.cachedBytes += task.downloadedBytes;
-          task.downloadedBytes = task.cachedBytes;
+        // 最后一块已经写进 .tmp 就别取消：取消了不会改名成正式文件，续传又只能从末尾要数据
+        final bool isAllReceived = total >= 0 && received >= total;
+        if (!isAllReceived &&
+            (task.status == DownloadStatus.PAUSED ||
+                task.status == DownloadStatus.COMPLETED)) {
           task.cancelToken?.cancel();
           task.cancelToken = null;
           _updateProgress(task);
